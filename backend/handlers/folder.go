@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"fmt"
+	"time"
 
 	"cloud-disk/database"
 
@@ -39,12 +40,18 @@ func (h *FolderHandler) CreateFolder(c *fiber.Ctx) error {
 	var parentPath string = "/"
 	if req.ParentID != nil && *req.ParentID > 0 {
 		var parentFolderPath string
+		var parentDeletedAt *time.Time
 		err := database.DB.QueryRow(`
-			SELECT path FROM folders WHERE id = $1 AND user_id = $2
-		`, *req.ParentID, userID).Scan(&parentFolderPath)
+			SELECT path, deleted_at FROM folders WHERE id = $1 AND user_id = $2
+		`, *req.ParentID, userID).Scan(&parentFolderPath, &parentDeletedAt)
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"error": "Parent folder not found",
+			})
+		}
+		if parentDeletedAt != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "Parent folder has been deleted",
 			})
 		}
 		if parentFolderPath == "/" {
@@ -107,9 +114,10 @@ func (h *FolderHandler) DeleteFolder(c *fiber.Ctx) error {
 	}
 
 	var folderName string
+	var deletedAt *time.Time
 	err := database.DB.QueryRow(`
-		SELECT name FROM folders WHERE id = $1 AND user_id = $2
-	`, folderID, userID).Scan(&folderName)
+		SELECT name, deleted_at FROM folders WHERE id = $1 AND user_id = $2
+	`, folderID, userID).Scan(&folderName, &deletedAt)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -122,48 +130,97 @@ func (h *FolderHandler) DeleteFolder(c *fiber.Ctx) error {
 		})
 	}
 
-	var hasFiles bool
-	err = database.DB.QueryRow(`
-		SELECT EXISTS(SELECT 1 FROM files WHERE folder_id = $1)
-	`, folderID).Scan(&hasFiles)
-
-	if err == nil && hasFiles {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Cannot delete non-empty folder",
+	if deletedAt != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "Folder already deleted",
 		})
 	}
 
-	var hasSubFolders bool
-	err = database.DB.QueryRow(`
-		SELECT EXISTS(SELECT 1 FROM folders WHERE parent_id = $1)
-	`, folderID).Scan(&hasSubFolders)
-
-	if err == nil && hasSubFolders {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Cannot delete non-empty folder",
-		})
-	}
-
-	result, err := database.DB.Exec(`
-		DELETE FROM folders WHERE id = $1 AND user_id = $2
-	`, folderID, userID)
-
+	allFolderIDs, err := getAllSubFolderIDs(folderID, userID)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to delete folder",
+			"error": "Failed to get subfolders",
+		})
+	}
+	allFolderIDs = append(allFolderIDs, folderID)
+
+	var totalSize int64
+	if len(allFolderIDs) > 0 {
+		err = database.DB.QueryRow(`
+			SELECT COALESCE(SUM(size), 0) FROM files 
+			WHERE folder_id = ANY($1) AND deleted_at IS NULL
+		`, allFolderIDs).Scan(&totalSize)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Failed to calculate folder size",
+			})
+		}
+	}
+
+	_, err = database.DB.Exec(`
+		UPDATE files SET deleted_at = NOW(), updated_at = NOW() 
+		WHERE folder_id = ANY($1) AND deleted_at IS NULL
+	`, allFolderIDs)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to delete files in folder",
 		})
 	}
 
-	rowsAffected, _ := result.RowsAffected()
-	if rowsAffected == 0 {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"error": "Folder not found",
+	_, err = database.DB.Exec(`
+		UPDATE folders SET deleted_at = NOW(), updated_at = NOW() 
+		WHERE id = ANY($1) AND deleted_at IS NULL
+	`, allFolderIDs)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to delete folders",
 		})
+	}
+
+	if totalSize > 0 {
+		_, err = database.DB.Exec(`
+			UPDATE users SET storage_used = storage_used - $1 WHERE id = $2
+		`, totalSize, userID)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Failed to update storage",
+			})
+		}
 	}
 
 	return c.JSON(fiber.Map{
 		"message": "Folder deleted successfully",
 	})
+}
+
+func getAllSubFolderIDs(parentID int, userID int) ([]int, error) {
+	var allIDs []int
+	var toProcess []int
+	toProcess = append(toProcess, parentID)
+
+	for len(toProcess) > 0 {
+		currentID := toProcess[0]
+		toProcess = toProcess[1:]
+
+		rows, err := database.DB.Query(`
+			SELECT id FROM folders 
+			WHERE parent_id = $1 AND user_id = $2 AND deleted_at IS NULL
+		`, currentID, userID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var id int
+			if err := rows.Scan(&id); err == nil {
+				allIDs = append(allIDs, id)
+				toProcess = append(toProcess, id)
+			}
+		}
+	}
+
+	return allIDs, nil
 }
 
 func (h *FolderHandler) GetFolderPath(c *fiber.Ctx) error {
@@ -177,9 +234,10 @@ func (h *FolderHandler) GetFolderPath(c *fiber.Ctx) error {
 	}
 
 	var path string
+	var deletedAt *time.Time
 	err := database.DB.QueryRow(`
-		SELECT path FROM folders WHERE id = $1 AND user_id = $2
-	`, folderID, userID).Scan(&path)
+		SELECT path, deleted_at FROM folders WHERE id = $1 AND user_id = $2
+	`, folderID, userID).Scan(&path, &deletedAt)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -189,6 +247,12 @@ func (h *FolderHandler) GetFolderPath(c *fiber.Ctx) error {
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": fmt.Sprintf("Failed to get folder path: %v", err),
+		})
+	}
+
+	if deletedAt != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "Folder has been deleted",
 		})
 	}
 

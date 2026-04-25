@@ -189,6 +189,12 @@ const Dashboard = () => {
             <div className="logo">☁️ 云盘</div>
             <div className="user-info">
               <span className="username">你好, {user?.username}</span>
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => (window.location.href = "/recycle")}
+              >
+                🗑️ 回收站
+              </button>
               <button className="btn btn-secondary btn-sm" onClick={logout}>
                 退出登录
               </button>

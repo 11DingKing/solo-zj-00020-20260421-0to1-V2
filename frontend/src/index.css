@@ -73,6 +73,15 @@ body {
   background-color: #ff7875;
 }
 
+.btn-success {
+  background-color: var(--success-color);
+  color: white;
+}
+
+.btn-success:hover {
+  background-color: #73d13d;
+}
+
 .btn-sm {
   padding: 4px 8px;
   font-size: 12px;
@@ -551,6 +560,22 @@ body {
 
 .toast.error {
   background-color: var(--error-color);
+}
+
+.toast.warning {
+  background-color: var(--warning-color);
+}
+
+.remaining-days {
+  font-weight: 500;
+}
+
+.remaining-days.danger {
+  color: var(--error-color);
+}
+
+.remaining-days.warning {
+  color: var(--warning-color);
 }
 
 @keyframes slideIn {

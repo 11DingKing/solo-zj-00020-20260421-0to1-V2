@@ -53,6 +53,18 @@ export interface UploadProgress {
   status: "pending" | "uploading" | "completed" | "error";
 }
 
+export interface RecycleItem {
+  id: number;
+  name: string;
+  type: "file" | "folder";
+  size?: number;
+  sizeFormatted?: string;
+  deletedAt: string;
+  remainingDays: number;
+  originalParentId?: number;
+  originalFolderId?: number;
+}
+
 export interface ApiError {
   error: string;
 }

@@ -24,6 +24,7 @@ type Folder struct {
 	Path      string
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	DeletedAt *time.Time
 }
 
 type File struct {
@@ -41,6 +42,7 @@ type File struct {
 	TotalChunks      sql.NullInt64
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+	DeletedAt        *time.Time
 }
 
 type ShareLink struct {

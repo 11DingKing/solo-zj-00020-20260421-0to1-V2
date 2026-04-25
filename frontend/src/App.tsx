@@ -4,6 +4,7 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
 import ShareDownload from "./pages/ShareDownload";
+import RecycleBin from "./pages/RecycleBin";
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { user, isLoading } = useAuth();
@@ -38,6 +39,14 @@ const App = () => {
         element={
           <ProtectedRoute>
             <Dashboard />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/recycle"
+        element={
+          <ProtectedRoute>
+            <RecycleBin />
           </ProtectedRoute>
         }
       />

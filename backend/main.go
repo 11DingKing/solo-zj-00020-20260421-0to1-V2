@@ -48,6 +48,9 @@ func main() {
 	fileHandler := handlers.NewFileHandler(cfg)
 	folderHandler := handlers.NewFolderHandler()
 	shareHandler := handlers.NewShareHandler(cfg)
+	recycleHandler := handlers.NewRecycleHandler(cfg)
+
+	handlers.StartCleanupTask(cfg)
 
 	api := app.Group("/api")
 
@@ -78,6 +81,14 @@ func main() {
 	shares.Post("/", shareHandler.CreateShare)
 	shares.Get("/", shareHandler.GetShares)
 	shares.Delete("/:code", shareHandler.DeleteShare)
+
+	recycle := api.Group("/recycle", middleware.JWTMiddleware(cfg))
+	recycle.Get("/", recycleHandler.GetRecycleList)
+	recycle.Post("/restore/file/:id", recycleHandler.RestoreFile)
+	recycle.Post("/restore/folder/:id", recycleHandler.RestoreFolder)
+	recycle.Delete("/file/:id", recycleHandler.PermanentlyDeleteFile)
+	recycle.Delete("/folder/:id", recycleHandler.PermanentlyDeleteFolder)
+	recycle.Delete("/empty", recycleHandler.EmptyRecycleBin)
 
 	log.Printf("Server starting on port %s", cfg.ServerPort)
 	if err := app.Listen(":" + cfg.ServerPort); err != nil {

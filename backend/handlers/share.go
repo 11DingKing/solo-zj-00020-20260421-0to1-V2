@@ -54,15 +54,22 @@ func (h *ShareHandler) CreateShare(c *fiber.Ctx) error {
 	var fileExists bool
 	var fileName string
 	var fileSize int64
+	var deletedAt *time.Time
 	err := database.DB.QueryRow(`
 		SELECT EXISTS(SELECT 1 FROM files WHERE id = $1 AND user_id = $2 AND upload_status = 'completed'),
-		       name, size
+		       name, size, deleted_at
 		FROM files WHERE id = $1
-	`, req.FileID, userID).Scan(&fileExists, &fileName, &fileSize)
+	`, req.FileID, userID).Scan(&fileExists, &fileName, &fileSize, &deletedAt)
 
 	if err != nil || !fileExists {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"error": "File not found or access denied",
+		})
+	}
+
+	if deletedAt != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "文件已被删除",
 		})
 	}
 
@@ -243,17 +250,24 @@ func (h *ShareHandler) GetShareInfo(c *fiber.Ctx) error {
 	var fileSize int64
 	var accessCode interface{}
 	var expiresAt time.Time
+	var deletedAt *time.Time
 
 	err = database.DB.QueryRow(`
-		SELECT s.code, s.file_id, f.name, f.size, s.access_code, s.expires_at
+		SELECT s.code, s.file_id, f.name, f.size, s.access_code, s.expires_at, f.deleted_at
 		FROM share_links s
 		JOIN files f ON s.file_id = f.id
 		WHERE s.code = $1 AND s.is_active = true
-	`, code).Scan(&shareCode, &fileID, &fileName, &fileSize, &accessCode, &expiresAt)
+	`, code).Scan(&shareCode, &fileID, &fileName, &fileSize, &accessCode, &expiresAt, &deletedAt)
 
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"error": "Share link not found or expired",
+		})
+	}
+
+	if deletedAt != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "文件已被删除",
 		})
 	}
 
@@ -294,6 +308,7 @@ func (h *ShareHandler) DownloadShare(c *fiber.Ctx) error {
 	var filePath string
 	var storedAccessCode interface{}
 	var expiresAt time.Time
+	var deletedAt *time.Time
 
 	cachedData, cacheErr := cache.Redis.HGetAll(ctx, cacheKey).Result()
 	if cacheErr == nil && len(cachedData) > 0 {
@@ -303,24 +318,35 @@ func (h *ShareHandler) DownloadShare(c *fiber.Ctx) error {
 		expiresAt, _ = time.Parse(time.RFC3339, cachedData["expiresAt"])
 
 		err := database.DB.QueryRow(`
-			SELECT file_path FROM files WHERE id = $1
-		`, fileID).Scan(&filePath)
+			SELECT file_path, deleted_at FROM files WHERE id = $1
+		`, fileID).Scan(&filePath, &deletedAt)
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"error": "File not found",
 			})
 		}
+		if deletedAt != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "文件已被删除",
+			})
+		}
 	} else {
 		err := database.DB.QueryRow(`
-			SELECT s.file_id, f.name, f.file_path, s.access_code, s.expires_at
+			SELECT s.file_id, f.name, f.file_path, s.access_code, s.expires_at, f.deleted_at
 			FROM share_links s
 			JOIN files f ON s.file_id = f.id
 			WHERE s.code = $1 AND s.is_active = true
-		`, code).Scan(&fileID, &fileName, &filePath, &storedAccessCode, &expiresAt)
+		`, code).Scan(&fileID, &fileName, &filePath, &storedAccessCode, &expiresAt, &deletedAt)
 
 		if err != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 				"error": "Share link not found or expired",
+			})
+		}
+
+		if deletedAt != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "文件已被删除",
 			})
 		}
 	}

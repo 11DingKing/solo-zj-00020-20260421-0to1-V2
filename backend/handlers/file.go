@@ -245,7 +245,7 @@ func (h *FileHandler) GetFiles(c *fiber.Ctx) error {
 
 	rows, err := database.DB.Query(`
 		SELECT id, name, size, download_count, created_at FROM files 
-		WHERE user_id = $1 AND folder_id IS NOT DISTINCT FROM $2 AND upload_status = 'completed'
+		WHERE user_id = $1 AND folder_id IS NOT DISTINCT FROM $2 AND upload_status = 'completed' AND deleted_at IS NULL
 		ORDER BY created_at DESC
 	`, userID, folderID)
 
@@ -275,7 +275,7 @@ func (h *FileHandler) GetFiles(c *fiber.Ctx) error {
 
 	var folders []models.FolderResponse
 	folderRows, err := database.DB.Query(`
-		SELECT id, name, created_at FROM folders WHERE user_id = $1 AND parent_id IS NOT DISTINCT FROM $2
+		SELECT id, name, created_at FROM folders WHERE user_id = $1 AND parent_id IS NOT DISTINCT FROM $2 AND deleted_at IS NULL
 		ORDER BY created_at DESC
 	`, userID, folderID)
 
@@ -305,13 +305,20 @@ func (h *FileHandler) DownloadFile(c *fiber.Ctx) error {
 	userID := c.Locals("user_id").(int)
 
 	var file models.File
+	var deletedAt *time.Time
 	err := database.DB.QueryRow(`
-		SELECT id, user_id, name, file_path FROM files WHERE id = $1
-	`, fileID).Scan(&file.ID, &file.UserID, &file.Name, &file.FilePath)
+		SELECT id, user_id, name, file_path, deleted_at FROM files WHERE id = $1
+	`, fileID).Scan(&file.ID, &file.UserID, &file.Name, &file.FilePath, &deletedAt)
 
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"error": "File not found",
+		})
+	}
+
+	if deletedAt != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "文件已被删除",
 		})
 	}
 
@@ -340,9 +347,10 @@ func (h *FileHandler) DeleteFile(c *fiber.Ctx) error {
 	userID := c.Locals("user_id").(int)
 
 	var file models.File
+	var deletedAt *time.Time
 	err := database.DB.QueryRow(`
-		SELECT id, user_id, file_path, size FROM files WHERE id = $1
-	`, fileID).Scan(&file.ID, &file.UserID, &file.FilePath, &file.Size)
+		SELECT id, user_id, file_path, size, deleted_at FROM files WHERE id = $1
+	`, fileID).Scan(&file.ID, &file.UserID, &file.FilePath, &file.Size, &deletedAt)
 
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
@@ -356,7 +364,15 @@ func (h *FileHandler) DeleteFile(c *fiber.Ctx) error {
 		})
 	}
 
-	_, err = database.DB.Exec(`DELETE FROM files WHERE id = $1`, fileID)
+	if deletedAt != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "File already deleted",
+		})
+	}
+
+	_, err = database.DB.Exec(`
+		UPDATE files SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1
+	`, fileID)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to delete file",
@@ -366,9 +382,11 @@ func (h *FileHandler) DeleteFile(c *fiber.Ctx) error {
 	_, err = database.DB.Exec(`
 		UPDATE users SET storage_used = storage_used - $1 WHERE id = $2
 	`, file.Size, userID)
-
-	if file.FilePath != "" {
-		os.Remove(file.FilePath)
+	if err != nil {
+		database.DB.Exec(`UPDATE files SET deleted_at = NULL WHERE id = $1`, fileID)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to update storage",
+		})
 	}
 
 	return c.JSON(fiber.Map{
@@ -406,13 +424,20 @@ func (h *FileHandler) PreviewFile(c *fiber.Ctx) error {
 	userID := c.Locals("user_id").(int)
 
 	var file models.File
+	var deletedAt *time.Time
 	err := database.DB.QueryRow(`
-		SELECT id, user_id, name, file_path, size, created_at FROM files WHERE id = $1
-	`, fileID).Scan(&file.ID, &file.UserID, &file.Name, &file.FilePath, &file.Size, &file.CreatedAt)
+		SELECT id, user_id, name, file_path, size, created_at, deleted_at FROM files WHERE id = $1
+	`, fileID).Scan(&file.ID, &file.UserID, &file.Name, &file.FilePath, &file.Size, &file.CreatedAt, &deletedAt)
 
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"error": "File not found",
+		})
+	}
+
+	if deletedAt != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "文件已被删除",
 		})
 	}
 

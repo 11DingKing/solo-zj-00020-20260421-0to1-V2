@@ -147,4 +147,28 @@ export const downloadShare = (code: string, accessCode?: string) => {
     .then((res) => res.data);
 };
 
+export const getRecycleList = () => {
+  return api.get("/recycle").then((res) => res.data);
+};
+
+export const restoreFile = (fileId: number) => {
+  return api.post(`/recycle/restore/file/${fileId}`).then((res) => res.data);
+};
+
+export const restoreFolder = (folderId: number) => {
+  return api.post(`/recycle/restore/folder/${folderId}`).then((res) => res.data);
+};
+
+export const permanentlyDeleteFile = (fileId: number) => {
+  return api.delete(`/recycle/file/${fileId}`).then((res) => res.data);
+};
+
+export const permanentlyDeleteFolder = (folderId: number) => {
+  return api.delete(`/recycle/folder/${folderId}`).then((res) => res.data);
+};
+
+export const emptyRecycleBin = () => {
+  return api.delete("/recycle/empty").then((res) => res.data);
+};
+
 export default api;
