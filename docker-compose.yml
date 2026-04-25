@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cloud-disk-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cloud_disk
+      POSTGRES_PASSWORD: cloud_disk_password
+      POSTGRES_DB: cloud_disk
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - cloud-disk-network
+    platform: linux/arm64
+
+  redis:
+    image: redis:7-alpine
+    container_name: cloud-disk-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - cloud-disk-network
+    platform: linux/arm64
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      platforms:
+        - linux/arm64
+    container_name: cloud-disk-backend
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=cloud_disk
+      - DB_PASSWORD=cloud_disk_password
+      - DB_NAME=cloud_disk
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - JWT_SECRET=your_jwt_secret_key_change_in_production
+      - UPLOAD_DIR=/app/uploads
+      - MAX_STORAGE_MB=100
+      - CHUNK_SIZE=2097152
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - cloud-disk-network
+    platform: linux/arm64
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      platforms:
+        - linux/arm64
+    container_name: cloud-disk-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - cloud-disk-network
+    platform: linux/arm64
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads:
+
+networks:
+  cloud-disk-network:
+    driver: bridge
