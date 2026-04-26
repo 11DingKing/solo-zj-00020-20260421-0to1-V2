@@ -8,6 +8,7 @@ import (
 	"cloud-disk/database"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/lib/pq"
 )
 
 type FolderHandler struct{}
@@ -149,7 +150,7 @@ func (h *FolderHandler) DeleteFolder(c *fiber.Ctx) error {
 		err = database.DB.QueryRow(`
 			SELECT COALESCE(SUM(size), 0) FROM files 
 			WHERE folder_id = ANY($1) AND deleted_at IS NULL
-		`, allFolderIDs).Scan(&totalSize)
+		`, pq.Array(allFolderIDs)).Scan(&totalSize)
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"error": "Failed to calculate folder size",
@@ -160,7 +161,7 @@ func (h *FolderHandler) DeleteFolder(c *fiber.Ctx) error {
 	_, err = database.DB.Exec(`
 		UPDATE files SET deleted_at = NOW(), updated_at = NOW() 
 		WHERE folder_id = ANY($1) AND deleted_at IS NULL
-	`, allFolderIDs)
+	`, pq.Array(allFolderIDs))
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to delete files in folder",
@@ -170,7 +171,7 @@ func (h *FolderHandler) DeleteFolder(c *fiber.Ctx) error {
 	_, err = database.DB.Exec(`
 		UPDATE folders SET deleted_at = NOW(), updated_at = NOW() 
 		WHERE id = ANY($1) AND deleted_at IS NULL
-	`, allFolderIDs)
+	`, pq.Array(allFolderIDs))
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to delete folders",
@@ -209,7 +210,6 @@ func getAllSubFolderIDs(parentID int, userID int) ([]int, error) {
 		if err != nil {
 			return nil, err
 		}
-		defer rows.Close()
 
 		for rows.Next() {
 			var id int
@@ -218,6 +218,7 @@ func getAllSubFolderIDs(parentID int, userID int) ([]int, error) {
 				toProcess = append(toProcess, id)
 			}
 		}
+		rows.Close()
 	}
 
 	return allIDs, nil

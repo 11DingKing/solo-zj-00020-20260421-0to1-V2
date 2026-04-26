@@ -12,6 +12,7 @@ import (
 	"cloud-disk/models"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/lib/pq"
 )
 
 type RecycleHandler struct {
@@ -229,7 +230,7 @@ func (h *RecycleHandler) RestoreFolder(c *fiber.Ctx) error {
 		err = database.DB.QueryRow(`
 			SELECT COALESCE(SUM(size), 0) FROM files 
 			WHERE folder_id = ANY($1) AND deleted_at IS NOT NULL
-		`, allFolderIDs).Scan(&totalSize)
+		`, pq.Array(allFolderIDs)).Scan(&totalSize)
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"error": "Failed to calculate folder size",
@@ -240,7 +241,7 @@ func (h *RecycleHandler) RestoreFolder(c *fiber.Ctx) error {
 	_, err = database.DB.Exec(`
 		UPDATE files SET deleted_at = NULL, updated_at = NOW() 
 		WHERE folder_id = ANY($1) AND deleted_at IS NOT NULL
-	`, allFolderIDs)
+	`, pq.Array(allFolderIDs))
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to restore files in folder",
@@ -256,7 +257,7 @@ func (h *RecycleHandler) RestoreFolder(c *fiber.Ctx) error {
 		_, err = database.DB.Exec(`
 			UPDATE folders SET deleted_at = NULL, updated_at = NOW() 
 			WHERE id = ANY($1) AND deleted_at IS NOT NULL
-		`, allFolderIDs)
+		`, pq.Array(allFolderIDs))
 	}
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -366,7 +367,7 @@ func (h *RecycleHandler) PermanentlyDeleteFolder(c *fiber.Ctx) error {
 
 	fileRows, err := database.DB.Query(`
 		SELECT file_path FROM files WHERE folder_id = ANY($1) AND deleted_at IS NOT NULL
-	`, allFolderIDs)
+	`, pq.Array(allFolderIDs))
 	if err == nil {
 		defer fileRows.Close()
 		for fileRows.Next() {
@@ -379,7 +380,7 @@ func (h *RecycleHandler) PermanentlyDeleteFolder(c *fiber.Ctx) error {
 
 	_, err = database.DB.Exec(`
 		DELETE FROM files WHERE folder_id = ANY($1) AND deleted_at IS NOT NULL
-	`, allFolderIDs)
+	`, pq.Array(allFolderIDs))
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to delete files from database",
@@ -388,7 +389,7 @@ func (h *RecycleHandler) PermanentlyDeleteFolder(c *fiber.Ctx) error {
 
 	_, err = database.DB.Exec(`
 		DELETE FROM folders WHERE id = ANY($1)
-	`, allFolderIDs)
+	`, pq.Array(allFolderIDs))
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to delete folders from database",
@@ -465,7 +466,6 @@ func getAllSubFolderIDsIncludingSelf(parentID int, userID int) ([]int, error) {
 		if err != nil {
 			return nil, err
 		}
-		defer rows.Close()
 
 		for rows.Next() {
 			var id int
@@ -473,6 +473,7 @@ func getAllSubFolderIDsIncludingSelf(parentID int, userID int) ([]int, error) {
 				toProcess = append(toProcess, id)
 			}
 		}
+		rows.Close()
 	}
 
 	return allIDs, nil
@@ -514,7 +515,7 @@ func cleanupExpiredItems(cfg *config.Config) {
 	if len(expiredFileIDs) > 0 {
 		_, err = database.DB.Exec(`
 			DELETE FROM files WHERE id = ANY($1)
-		`, expiredFileIDs)
+		`, pq.Array(expiredFileIDs))
 		if err != nil {
 			fmt.Printf("Failed to delete expired files: %v\n", err)
 		}
